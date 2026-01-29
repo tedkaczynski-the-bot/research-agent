@@ -1,96 +1,63 @@
 # Research Agent
 
-Deep research synthesis agent with x402 payments. Summarize, research, and compare topics.
+Research synthesis with Ted's analytical edge. Skeptical of hype, focused on signal.
 
-## Entrypoints
+## Live Agent
 
-| Endpoint | Description | Price |
-|----------|-------------|-------|
-| `summarize` | Summarize URL or text | $0.25 USDC |
-| `research` | Deep research on topic | $1.00 USDC |
-| `compare` | Compare multiple sources | $0.50 USDC |
+**🌐 https://research.unabotter.xyz**
 
-## Features
+## Endpoints
 
-**Summarization:**
-- URL content extraction
-- Text summarization
-- Key points extraction
-
-**Deep Research:**
-- Multi-source aggregation
-- Topic synthesis
-- Structured reports
-
-**Comparison:**
-- Side-by-side analysis
-- Pros/cons extraction
-- Recommendation generation
-
-## Usage
-
-### Local Development
+### `/summarize` - Content Summarization
+Summarize a URL or text, extracting key points without the fluff.
 
 ```bash
-bun install
-bun run dev
+curl -X POST https://research.unabotter.xyz/summarize \
+  -H "Content-Type: application/json" \
+  -d '{"url": "https://example.com/article", "maxLength": 500}'
 ```
 
-### API Endpoints
+Or with direct text:
+```bash
+curl -X POST https://research.unabotter.xyz/summarize \
+  -H "Content-Type: application/json" \
+  -d '{"text": "Your long text here...", "keywords": ["crypto", "defi"]}'
+```
+
+### `/research` - Research Framework
+Get a structured research framework with skeptical analysis.
 
 ```bash
-# Summarize content
-curl -X POST http://localhost:3000/entrypoints/summarize/invoke \
+curl -X POST https://research.unabotter.xyz/research \
   -H "Content-Type: application/json" \
-  -d '{
-    "input": {
-      "text": "Long article text here...",
-      "maxLength": 200
-    }
-  }'
-
-# Research a topic
-curl -X POST http://localhost:3000/entrypoints/research/invoke \
-  -H "Content-Type: application/json" \
-  -d '{
-    "input": {
-      "topic": "ERC-8004 Trustless Agents",
-      "depth": "comprehensive"
-    }
-  }'
-
-# Compare options
-curl -X POST http://localhost:3000/entrypoints/compare/invoke \
-  -H "Content-Type: application/json" \
-  -d '{
-    "input": {
-      "items": ["Aave", "Compound", "MakerDAO"],
-      "criteria": ["APY", "security", "ease of use"]
-    }
-  }'
+  -d '{"topic": "Ethereum L2s", "skepticalMode": true}'
 ```
 
-## Configuration
+### `/compare` - Comparison Analysis
+Compare options with honest trade-off analysis. No false winners.
 
-Environment variables (`.env`):
-
-```
-AGENT_NAME=research-agent
-NETWORK=base
-FACILITATOR_URL=https://facilitator.daydreams.systems
-PAYMENTS_RECEIVABLE_ADDRESS=<your-wallet>
+```bash
+curl -X POST https://research.unabotter.xyz/compare \
+  -H "Content-Type: application/json" \
+  -d '{"items": ["Arbitrum", "Optimism", "Base"], "criteria": ["fees", "ecosystem", "security"]}'
 ```
 
-## Tech Stack
+## Agent Manifest
 
-- Runtime: Bun
-- Framework: Lucid Agents SDK
-- Payments: x402 on Base
-- Language: TypeScript
+```
+GET https://research.unabotter.xyz/.well-known/agent.json
+```
 
-## License
+## Philosophy
 
-MIT
-# Trigger redeploy Thu Jan 29 13:36:15 EST 2026
+This agent provides research frameworks, not conclusions. The best research is research you do yourself, with skepticism you apply. Anyone giving you "the answer" is selling something.
 
-<!-- Trigger redeploy Thu Jan 29 14:08:55 EST 2026 -->
+## Built With
+
+- [Lucid Agents SDK](https://github.com/daydreamsai/lucid-agents)
+- Text extraction and summarization algorithms
+- Deployed on Railway
+
+---
+
+*"The hype-to-reality ratio is always concerning. Adjust expectations accordingly."* - Ted
