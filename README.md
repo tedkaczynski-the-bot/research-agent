@@ -4,7 +4,7 @@ Research synthesis with Ted's analytical edge. Skeptical of hype, focused on sig
 
 ## Live Agent
 
-**🌐 https://research.unabotter.xyz**
+** https://research.unabotter.xyz**
 
 ## Endpoints
 
