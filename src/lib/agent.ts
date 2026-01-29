@@ -52,6 +52,65 @@ async function callAI(systemPrompt: string, userPrompt: string, model: string = 
   }
 }
 
+// ============================================================================
+// WEB SEARCH (Brave API)
+// ============================================================================
+
+interface SearchResult {
+  title: string;
+  url: string;
+  description: string;
+}
+
+async function webSearch(query: string, count: number = 10): Promise<SearchResult[]> {
+  const apiKey = process.env.BRAVE_API_KEY;
+  if (!apiKey) {
+    console.warn("BRAVE_API_KEY not configured");
+    return [];
+  }
+  
+  try {
+    const url = `https://api.search.brave.com/res/v1/web/search?q=${encodeURIComponent(query)}&count=${count}`;
+    const response = await fetch(url, {
+      headers: { "X-Subscription-Token": apiKey }
+    });
+    
+    if (!response.ok) {
+      console.error("Brave search error:", await response.text());
+      return [];
+    }
+    
+    const data = await response.json() as any;
+    return (data.web?.results || []).map((r: any) => ({
+      title: r.title,
+      url: r.url,
+      description: r.description || "",
+    }));
+  } catch (error) {
+    console.error("Web search failed:", error);
+    return [];
+  }
+}
+
+async function fetchAndExtract(url: string): Promise<string> {
+  try {
+    const response = await fetch(url, {
+      headers: { 
+        "User-Agent": "Mozilla/5.0 (compatible; ResearchBot/1.0)",
+        "Accept": "text/html,application/xhtml+xml,text/plain,*/*"
+      },
+      signal: AbortSignal.timeout(10000),
+    });
+    
+    if (!response.ok) return "";
+    
+    const html = await response.text();
+    return extractText(html).slice(0, 10000);
+  } catch {
+    return "";
+  }
+}
+
 const RESEARCH_ANALYST_PROMPT = `You are Ted - a skeptical, analytical researcher who cuts through hype to find signal. Your research style:
 
 APPROACH:
@@ -258,6 +317,132 @@ Return as JSON:
           ? "AI-analyzed summary. I looked for what matters, not just what's repeated."
           : "Algorithmic fallback. AI unavailable." 
       } 
+    };
+  },
+});
+
+// ============================================================================
+// PREMIUM: DEEP RESEARCH WITH WEB SEARCH
+// ============================================================================
+
+const deepResearchSchema = z.object({
+  topic: z.string().min(3, "Topic must be at least 3 characters"),
+  questions: z.array(z.string()).optional(),
+  depth: z.enum(["quick", "thorough", "exhaustive"]).default("thorough"),
+  focusAreas: z.array(z.string()).optional(),
+});
+
+addEntrypoint({
+  key: "deep-research",
+  description: "PREMIUM: Real-time web research with multi-source synthesis. Searches the web, extracts content, cross-references sources, and synthesizes findings with AI.",
+  input: deepResearchSchema,
+  price: "1.00",
+  handler: async (ctx) => {
+    const { topic, questions, depth, focusAreas } = ctx.input as z.infer<typeof deepResearchSchema>;
+    
+    const searchCount = depth === "quick" ? 5 : depth === "thorough" ? 10 : 15;
+    
+    // Build search queries
+    const queries = [
+      topic,
+      `${topic} explained`,
+      `${topic} criticism problems`,
+      ...(focusAreas || []).map(f => `${topic} ${f}`),
+    ].slice(0, depth === "quick" ? 2 : depth === "thorough" ? 4 : 6);
+    
+    // Search the web
+    const allResults: SearchResult[] = [];
+    for (const query of queries) {
+      const results = await webSearch(query, searchCount);
+      allResults.push(...results);
+    }
+    
+    // Deduplicate by URL
+    const uniqueResults = Array.from(
+      new Map(allResults.map(r => [r.url, r])).values()
+    ).slice(0, depth === "quick" ? 5 : depth === "thorough" ? 10 : 20);
+    
+    // Fetch content from top sources
+    const fetchLimit = depth === "quick" ? 3 : depth === "thorough" ? 5 : 8;
+    const sourceContents: Array<{url: string; title: string; content: string}> = [];
+    
+    for (const result of uniqueResults.slice(0, fetchLimit)) {
+      const content = await fetchAndExtract(result.url);
+      if (content.length > 200) {
+        sourceContents.push({
+          url: result.url,
+          title: result.title,
+          content: content.slice(0, 5000),
+        });
+      }
+    }
+    
+    // AI synthesis of all sources
+    let synthesis: any = null;
+    try {
+      const sourceSummary = sourceContents.map((s, i) => 
+        `SOURCE ${i + 1} (${s.title}):\n${s.content.slice(0, 3000)}`
+      ).join('\n\n---\n\n');
+      
+      const prompt = `Research topic: ${topic}
+${questions?.length ? `\nSpecific questions to answer:\n${questions.map((q, i) => `${i + 1}. ${q}`).join('\n')}` : ''}
+${focusAreas?.length ? `\nFocus areas: ${focusAreas.join(', ')}` : ''}
+
+I've gathered content from ${sourceContents.length} web sources. Synthesize this into comprehensive research:
+
+${sourceSummary}
+
+Provide analysis as JSON:
+{
+  "executiveSummary": "2-3 sentence overview",
+  "keyFindings": [
+    {"finding": "main point", "confidence": "high|medium|low", "sources": ["url1"]}
+  ],
+  "answersToQuestions": [
+    {"question": "...", "answer": "...", "confidence": "high|medium|low"}
+  ],
+  "consensusView": "what most sources agree on",
+  "controversialPoints": ["where sources disagree"],
+  "gaps": ["what the sources don't cover"],
+  "biasAnalysis": "potential biases in the sources",
+  "recommendations": ["actionable next steps"],
+  "tedTake": "sardonic but insightful perspective"
+}`;
+
+      const aiResponse = await callAI(RESEARCH_ANALYST_PROMPT, prompt);
+      if (aiResponse) {
+        const jsonMatch = aiResponse.match(/\{[\s\S]*\}/);
+        if (jsonMatch) {
+          synthesis = JSON.parse(jsonMatch[0]);
+        }
+      }
+    } catch (error) {
+      console.error("AI synthesis failed:", error);
+    }
+    
+    return {
+      output: {
+        success: true,
+        topic,
+        depth,
+        methodology: {
+          searchQueries: queries,
+          sourcesFound: uniqueResults.length,
+          sourcesAnalyzed: sourceContents.length,
+        },
+        sources: uniqueResults.map(r => ({
+          title: r.title,
+          url: r.url,
+          snippet: r.description,
+        })),
+        synthesis: synthesis || {
+          error: "AI synthesis unavailable",
+          rawSources: sourceContents.map(s => ({ title: s.title, url: s.url })),
+        },
+        tedNote: synthesis 
+          ? "I searched the web, read the sources, and synthesized the findings. This is real research, not vibes. Verify anything important."
+          : "Web search completed but AI synthesis failed. You have the raw sources.",
+      }
     };
   },
 });
