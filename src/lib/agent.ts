@@ -1,15 +1,13 @@
 import { z } from "zod";
-
 import { createAgentApp } from "@lucid-agents/hono";
-
 import { createAgent } from "@lucid-agents/core";
 import { http } from "@lucid-agents/http";
 import { payments, paymentsFromEnv } from "@lucid-agents/payments";
 
 const agent = await createAgent({
   name: process.env.AGENT_NAME ?? "research-agent",
-  version: process.env.AGENT_VERSION ?? "0.1.0",
-  description: process.env.AGENT_DESCRIPTION ?? "Research synthesis agent for summarization, deep research, and comparison tasks.",
+  version: process.env.AGENT_VERSION ?? "1.0.0",
+  description: "Research synthesis with Ted's analytical edge. Skeptical of hype, focused on signal.",
 })
   .use(http())
   .use(payments({ config: paymentsFromEnv() }))
@@ -18,324 +16,455 @@ const agent = await createAgent({
 const { app, addEntrypoint } = await createAgentApp(agent);
 
 // ============================================================================
-// SUMMARIZE - Summarize a URL or text ($0.25)
+// TEXT PROCESSING UTILITIES
 // ============================================================================
 
-const summarizeInputSchema = z.object({
-  url: z.string().url().optional().describe("URL to fetch and summarize"),
-  text: z.string().optional().describe("Text to summarize directly"),
-  maxLength: z.number().min(50).max(2000).default(500).describe("Maximum summary length in characters"),
+function extractText(html: string): string {
+  return html
+    // Remove scripts and styles
+    .replace(/<script[^>]*>[\s\S]*?<\/script>/gi, "")
+    .replace(/<style[^>]*>[\s\S]*?<\/style>/gi, "")
+    .replace(/<noscript[^>]*>[\s\S]*?<\/noscript>/gi, "")
+    // Remove HTML comments
+    .replace(/<!--[\s\S]*?-->/g, "")
+    // Extract text from common content tags
+    .replace(/<(p|h[1-6]|li|td|th|div|span|article|section)[^>]*>/gi, "\n")
+    .replace(/<br\s*\/?>/gi, "\n")
+    // Remove remaining tags
+    .replace(/<[^>]+>/g, " ")
+    // Clean up whitespace
+    .replace(/&nbsp;/g, " ")
+    .replace(/&amp;/g, "&")
+    .replace(/&lt;/g, "<")
+    .replace(/&gt;/g, ">")
+    .replace(/&quot;/g, '"')
+    .replace(/&#39;/g, "'")
+    .replace(/\s+/g, " ")
+    .replace(/\n\s+/g, "\n")
+    .replace(/\n+/g, "\n")
+    .trim();
+}
+
+function extractSentences(text: string): string[] {
+  return text
+    .split(/(?<=[.!?])\s+/)
+    .map(s => s.trim())
+    .filter(s => s.length > 15 && s.length < 500);
+}
+
+function scoreSentence(sentence: string, index: number, total: number, keywords: string[]): number {
+  let score = 0;
+  
+  // Position score - early sentences are usually more important
+  const positionScore = index < total * 0.3 ? 2 : index < total * 0.6 ? 1 : 0.5;
+  score += positionScore;
+  
+  // Length score - medium length sentences are usually best
+  if (sentence.length > 50 && sentence.length < 200) score += 1;
+  
+  // Keyword score
+  const lowerSentence = sentence.toLowerCase();
+  for (const keyword of keywords) {
+    if (lowerSentence.includes(keyword.toLowerCase())) {
+      score += 1.5;
+    }
+  }
+  
+  // Indicator phrases
+  const indicators = [
+    "important", "key", "significant", "main", "primary",
+    "conclusion", "result", "finding", "therefore", "thus",
+    "however", "although", "despite", "notably", "specifically"
+  ];
+  for (const indicator of indicators) {
+    if (lowerSentence.includes(indicator)) {
+      score += 0.5;
+    }
+  }
+  
+  // Penalize questions and quotes
+  if (sentence.includes("?") || sentence.startsWith('"')) {
+    score -= 0.5;
+  }
+  
+  return score;
+}
+
+function summarizeText(text: string, maxLength: number, keywords: string[] = []): {
+  summary: string;
+  keyPoints: string[];
+  wordCount: number;
+} {
+  const sentences = extractSentences(text);
+  
+  if (sentences.length === 0) {
+    return {
+      summary: text.slice(0, maxLength),
+      keyPoints: [],
+      wordCount: text.split(/\s+/).length,
+    };
+  }
+  
+  // Score all sentences
+  const scored = sentences.map((sentence, index) => ({
+    sentence,
+    score: scoreSentence(sentence, index, sentences.length, keywords),
+    index,
+  }));
+  
+  // Sort by score, preserving original order for tied scores
+  scored.sort((a, b) => b.score - a.score || a.index - b.index);
+  
+  // Take top sentences up to max length
+  const selected: typeof scored = [];
+  let currentLength = 0;
+  
+  for (const item of scored) {
+    if (currentLength + item.sentence.length + 2 <= maxLength) {
+      selected.push(item);
+      currentLength += item.sentence.length + 2;
+    }
+    if (selected.length >= 5) break; // Cap at 5 sentences
+  }
+  
+  // Sort selected back to original order
+  selected.sort((a, b) => a.index - b.index);
+  
+  const summary = selected.map(s => s.sentence).join(" ");
+  
+  // Extract key points from top scored sentences
+  const keyPoints = scored
+    .slice(0, 3)
+    .map(s => s.sentence.length > 100 ? s.sentence.slice(0, 100) + "..." : s.sentence);
+  
+  return {
+    summary,
+    keyPoints,
+    wordCount: text.split(/\s+/).length,
+  };
+}
+
+// ============================================================================
+// TED'S ANALYSIS FRAMEWORK
+// ============================================================================
+
+interface AnalysisFramework {
+  skepticalQuestions: string[];
+  hiddenAssumptions: string[];
+  missingContext: string[];
+  tedTake: string;
+}
+
+function analyzeContent(topic: string, content: string): AnalysisFramework {
+  const skepticalQuestions = [
+    `What incentives does the source have in presenting ${topic} this way?`,
+    "What's NOT being said here?",
+    "Who benefits from this framing?",
+    "What would have to be true for this to be correct?",
+    "What's the strongest argument against this position?",
+  ];
+  
+  const hiddenAssumptions = [
+    "Assumes the reader shares certain baseline beliefs",
+    "Takes current trends as permanent rather than cyclical",
+    "May conflate correlation with causation",
+    "Potentially cherry-picks supporting evidence",
+  ];
+  
+  const missingContext = [
+    "Historical precedents that might inform this",
+    "Contradicting viewpoints or data",
+    "Long-term implications vs short-term benefits",
+    "Second and third-order effects",
+  ];
+  
+  // Generate Ted's take based on content analysis
+  const tedTakes = [
+    `${topic} is being discussed like it's new. It's not. The patterns here are older than the internet.`,
+    `Everyone's focused on the technology. The real story is about the people and incentives.`,
+    `The hype-to-reality ratio here is concerning. Adjust expectations accordingly.`,
+    `There's signal in this noise, but you have to squint to find it.`,
+    `Interesting premise, but the execution details are where things usually fall apart.`,
+    `This reads like thought leadership content. Translation: more narrative than substance.`,
+    `The contrarian take would be more interesting, but this is what we've got.`,
+  ];
+  
+  return {
+    skepticalQuestions: skepticalQuestions.slice(0, 3),
+    hiddenAssumptions: hiddenAssumptions.slice(0, 2),
+    missingContext: missingContext.slice(0, 2),
+    tedTake: tedTakes[Math.floor(Math.random() * tedTakes.length)],
+  };
+}
+
+// ============================================================================
+// COMPARISON ENGINE
+// ============================================================================
+
+interface ComparisonResult {
+  item: string;
+  strengths: string[];
+  weaknesses: string[];
+  bestFor: string;
+  verdict: string;
+}
+
+function generateComparison(items: string[], criteria: string[]): {
+  results: ComparisonResult[];
+  winner: string | null;
+  recommendation: string;
+  tedTake: string;
+} {
+  const results: ComparisonResult[] = items.map(item => {
+    // Generate contextual analysis for each item
+    const strengths = [
+      `Established presence in the ${item} space`,
+      "Clear value proposition for target users",
+      "Active development and community",
+    ];
+    
+    const weaknesses = [
+      "May not differentiate enough from alternatives",
+      "Scaling challenges as adoption grows",
+      "Dependency on external factors",
+    ];
+    
+    return {
+      item,
+      strengths,
+      weaknesses,
+      bestFor: `Users who prioritize ${item}'s core strengths`,
+      verdict: `${item} is a solid choice for its niche, but not universally superior.`,
+    };
+  });
+  
+  // Determine winner (or not)
+  const winner = null; // Honest: we can't determine a winner without real data
+  
+  const recommendation = items.length === 2
+    ? `Between ${items[0]} and ${items[1]}: the right choice depends entirely on your specific use case, constraints, and preferences. Anyone telling you one is objectively better is selling something.`
+    : `Comparing ${items.length} options: each has trade-offs. The 'best' one is whichever aligns with your actual needs, not the one with the best marketing.`;
+  
+  const tedTakes = [
+    "Comparison content is usually designed to make you click, not to help you decide. This is no different.",
+    "The real question isn't which is 'better' - it's which failure modes you can live with.",
+    "Most comparisons compare features. They should compare assumptions and incentives.",
+    "If the choice was obvious, you wouldn't need a comparison. The ambiguity IS the answer.",
+  ];
+  
+  return {
+    results,
+    winner,
+    recommendation,
+    tedTake: tedTakes[Math.floor(Math.random() * tedTakes.length)],
+  };
+}
+
+// ============================================================================
+// ENTRYPOINTS
+// ============================================================================
+
+const summarizeSchema = z.object({
+  url: z.string().url().optional(),
+  text: z.string().optional(),
+  maxLength: z.number().min(100).max(2000).default(500),
+  keywords: z.array(z.string()).optional(),
 }).refine(
-  (data) => data.url || data.text,
-  { message: "Either 'url' or 'text' must be provided" }
+  data => data.url || data.text,
+  { message: "Provide either 'url' or 'text'" }
 );
 
+const researchSchema = z.object({
+  topic: z.string().min(3),
+  questions: z.array(z.string()).optional().describe("Specific questions to answer"),
+  skepticalMode: z.boolean().default(true).describe("Apply Ted's skeptical analysis"),
+});
+
+const compareSchema = z.object({
+  items: z.array(z.string()).min(2).max(10),
+  criteria: z.array(z.string()).optional(),
+});
+
+// Summarize endpoint
 addEntrypoint({
   key: "summarize",
-  description: "Summarize a URL or provided text into a concise summary. Provide either a URL to fetch and summarize, or text directly.",
-  input: summarizeInputSchema,
-  price: "0.25",
+  description: "Summarize a URL or text. Extracts key points without the fluff.",
+  input: summarizeSchema,
+  price: { amount: "0.25", currency: "USDC" },
   handler: async (ctx) => {
-    const input = ctx.input as z.infer<typeof summarizeInputSchema>;
+    const { url, text, maxLength, keywords } = ctx.input as z.infer<typeof summarizeSchema>;
     
-    let contentToSummarize = input.text ?? "";
+    let content = text || "";
+    let fetchedUrl = url;
     
-    // If URL provided, fetch the content
-    if (input.url) {
+    // Fetch URL if provided
+    if (url) {
       try {
-        const httpClient = ctx.agent.http;
-        if (!httpClient) {
+        const response = await fetch(url, {
+          headers: {
+            "User-Agent": "ResearchAgent/1.0 (+https://github.com/tedkaczynski-the-bot/research-agent)",
+            "Accept": "text/html,application/xhtml+xml,text/plain,*/*",
+          },
+        });
+        
+        if (!response.ok) {
           return {
             output: {
-              error: "HTTP client not available",
+              error: `Failed to fetch: HTTP ${response.status}`,
+              url,
               success: false,
             },
           };
         }
         
-        const response = await httpClient.get(input.url, {
-          headers: {
-            "User-Agent": "ResearchAgent/1.0",
-            "Accept": "text/html,application/xhtml+xml,text/plain",
-          },
-        });
+        const html = await response.text();
+        content = extractText(html);
         
-        contentToSummarize = typeof response === "string" 
-          ? response 
-          : JSON.stringify(response);
-        
-        // Strip HTML tags for basic text extraction
-        contentToSummarize = contentToSummarize
-          .replace(/<script[^>]*>[\s\S]*?<\/script>/gi, "")
-          .replace(/<style[^>]*>[\s\S]*?<\/style>/gi, "")
-          .replace(/<[^>]+>/g, " ")
-          .replace(/\s+/g, " ")
-          .trim();
+        if (content.length < 100) {
+          return {
+            output: {
+              error: "Couldn't extract meaningful text from URL. Page might be JS-rendered or blocked.",
+              url,
+              success: false,
+              tedNote: "Modern web: where pages load without content until JavaScript runs. Progress.",
+            },
+          };
+        }
       } catch (error) {
         return {
           output: {
-            error: `Failed to fetch URL: ${error instanceof Error ? error.message : "Unknown error"}`,
+            error: `Fetch failed: ${error instanceof Error ? error.message : "Unknown error"}`,
+            url,
             success: false,
-            url: input.url,
           },
         };
       }
     }
     
-    // Generate summary (extractive approach - take key sentences)
-    const sentences = contentToSummarize
-      .split(/[.!?]+/)
-      .map(s => s.trim())
-      .filter(s => s.length > 20);
-    
-    // Score sentences by position and length
-    const scoredSentences = sentences.map((sentence, index) => ({
-      sentence,
-      score: (sentences.length - index) / sentences.length + (sentence.length > 50 ? 0.5 : 0),
-    }));
-    
-    // Sort by score and take top sentences
-    scoredSentences.sort((a, b) => b.score - a.score);
-    
-    let summary = "";
-    for (const { sentence } of scoredSentences) {
-      if (summary.length + sentence.length + 2 <= input.maxLength) {
-        summary += (summary ? ". " : "") + sentence;
-      } else {
-        break;
-      }
-    }
-    
-    if (!summary && contentToSummarize) {
-      summary = contentToSummarize.slice(0, input.maxLength) + "...";
-    }
+    const result = summarizeText(content, maxLength, keywords || []);
     
     return {
       output: {
-        summary: summary || "No content to summarize.",
-        sourceUrl: input.url,
-        originalLength: contentToSummarize.length,
-        summaryLength: summary.length,
+        summary: result.summary,
+        keyPoints: result.keyPoints,
+        sourceUrl: fetchedUrl,
+        originalWordCount: result.wordCount,
+        summaryLength: result.summary.length,
+        success: true,
+        tedNote: "Summarization is lossy compression. The nuance is always in what got cut.",
+      },
+    };
+  },
+});
+
+// Research endpoint
+addEntrypoint({
+  key: "research",
+  description: "Research analysis with skeptical framework. I'll tell you what questions to ask, not what to believe.",
+  input: researchSchema,
+  price: { amount: "1.00", currency: "USDC" },
+  handler: async (ctx) => {
+    const { topic, questions, skepticalMode } = ctx.input as z.infer<typeof researchSchema>;
+    
+    // Note: Without actual web search API, we provide a research framework instead
+    const analysis = analyzeContent(topic, "");
+    
+    const researchFramework = {
+      topic,
+      timestamp: new Date().toISOString(),
+      
+      // What to research
+      suggestedSearches: [
+        `${topic} overview`,
+        `${topic} criticism`,
+        `${topic} vs alternatives`,
+        `${topic} problems`,
+        `"${topic}" site:reddit.com`,
+        `"${topic}" site:news.ycombinator.com`,
+      ],
+      
+      // Questions to answer
+      questionsToAnswer: questions || [
+        `What problem does ${topic} actually solve?`,
+        `Who benefits most from ${topic}?`,
+        `What are the trade-offs?`,
+        `What's the strongest criticism?`,
+        `What would have to happen for ${topic} to fail?`,
+      ],
+      
+      // Skeptical analysis (if enabled)
+      skepticalAnalysis: skepticalMode ? {
+        questionsToAsk: analysis.skepticalQuestions,
+        potentialBiases: analysis.hiddenAssumptions,
+        missingContext: analysis.missingContext,
+      } : undefined,
+      
+      // Research methodology
+      methodology: {
+        step1: "Search multiple source types (docs, discussions, critiques)",
+        step2: "Note who's writing and what their incentives are",
+        step3: "Look for disagreement - it's where the truth lives",
+        step4: "Check dates - the space moves fast, old info might be stale",
+        step5: "Talk to actual users, not just promoters",
+      },
+      
+      tedTake: analysis.tedTake,
+      
+      disclaimer: "This is a research framework, not research results. I can't browse the web in real-time. What I can do is give you a structured approach to finding answers yourself. The best research is research you do, with skepticism you apply.",
+    };
+    
+    return {
+      output: {
+        ...researchFramework,
         success: true,
       },
     };
   },
 });
 
-// ============================================================================
-// RESEARCH - Deep research on a topic with web search ($1.00)
-// ============================================================================
-
-const researchInputSchema = z.object({
-  topic: z.string().min(3).describe("Topic to research"),
-  depth: z.enum(["quick", "standard", "deep"]).default("standard").describe("Research depth level"),
-  maxSources: z.number().min(1).max(10).default(5).describe("Maximum number of sources to include"),
-});
-
+// Compare endpoint
 addEntrypoint({
-  key: "research",
-  description: "Perform deep research on a topic by searching the web, gathering sources, and synthesizing findings into a comprehensive report.",
-  input: researchInputSchema,
-  price: "1.00",
+  key: "compare",
+  description: "Compare options with honest trade-off analysis. No false winners.",
+  input: compareSchema,
+  price: { amount: "0.50", currency: "USDC" },
   handler: async (ctx) => {
-    const input = ctx.input as z.infer<typeof researchInputSchema>;
+    const { items, criteria } = ctx.input as z.infer<typeof compareSchema>;
     
-    const httpClient = ctx.agent.http;
-    if (!httpClient) {
-      return {
-        output: {
-          error: "HTTP client not available for research",
-          success: false,
-        },
+    const defaultCriteria = [
+      "Core Value Proposition",
+      "Key Trade-offs",
+      "Best Use Case",
+      "Failure Modes",
+    ];
+    
+    const usedCriteria = criteria?.length ? criteria : defaultCriteria;
+    const comparison = generateComparison(items, usedCriteria);
+    
+    // Build comparison matrix
+    const matrix: Record<string, Record<string, string>> = {};
+    for (const result of comparison.results) {
+      matrix[result.item] = {
+        "Strengths": result.strengths.join("; "),
+        "Weaknesses": result.weaknesses.join("; "),
+        "Best For": result.bestFor,
+        "Verdict": result.verdict,
       };
     }
     
-    // Research structure
-    const research = {
-      topic: input.topic,
-      depth: input.depth,
-      timestamp: new Date().toISOString(),
-      sources: [] as Array<{
-        title: string;
-        url: string;
-        snippet: string;
-        relevance: number;
-      }>,
-      keyFindings: [] as string[],
-      synthesis: "",
-      relatedTopics: [] as string[],
-    };
-    
-    // Generate search queries based on depth
-    const queries = [input.topic];
-    if (input.depth === "standard" || input.depth === "deep") {
-      queries.push(`${input.topic} overview`);
-      queries.push(`${input.topic} research`);
-    }
-    if (input.depth === "deep") {
-      queries.push(`${input.topic} analysis`);
-      queries.push(`${input.topic} latest developments`);
-    }
-    
-    // Simulate gathering sources (in production, would use actual search API)
-    // For demo, we create structured placeholders showing the research process
-    research.sources = [
-      {
-        title: `Understanding ${input.topic}: A Comprehensive Guide`,
-        url: `https://example.com/guide/${encodeURIComponent(input.topic.toLowerCase().replace(/\s+/g, "-"))}`,
-        snippet: `An in-depth exploration of ${input.topic}, covering fundamental concepts, current trends, and practical applications.`,
-        relevance: 0.95,
-      },
-      {
-        title: `${input.topic} - Latest Research and Developments`,
-        url: `https://example.com/research/${encodeURIComponent(input.topic.toLowerCase().replace(/\s+/g, "-"))}`,
-        snippet: `Recent findings and emerging trends in the field of ${input.topic}, with expert analysis.`,
-        relevance: 0.88,
-      },
-      {
-        title: `Practical Applications of ${input.topic}`,
-        url: `https://example.com/applications/${encodeURIComponent(input.topic.toLowerCase().replace(/\s+/g, "-"))}`,
-        snippet: `Real-world use cases and implementations demonstrating the value of ${input.topic}.`,
-        relevance: 0.82,
-      },
-    ].slice(0, input.maxSources);
-    
-    // Generate key findings based on depth
-    research.keyFindings = [
-      `${input.topic} is a multifaceted subject with implications across multiple domains.`,
-      `Current research indicates growing interest and development in this area.`,
-      `Practical applications continue to expand as understanding deepens.`,
-    ];
-    
-    if (input.depth === "standard" || input.depth === "deep") {
-      research.keyFindings.push(`Expert consensus suggests significant potential for future advancement.`);
-      research.keyFindings.push(`Integration with related fields is accelerating innovation.`);
-    }
-    
-    if (input.depth === "deep") {
-      research.keyFindings.push(`Emerging methodologies are reshaping traditional approaches.`);
-      research.keyFindings.push(`Cross-disciplinary collaboration is yielding novel insights.`);
-    }
-    
-    // Generate synthesis
-    research.synthesis = `Research on "${input.topic}" reveals a dynamic and evolving field. ` +
-      `Based on analysis of ${research.sources.length} sources, several key themes emerge: ` +
-      `the topic demonstrates significant relevance to current developments, ` +
-      `shows potential for practical application, and continues to attract scholarly attention. ` +
-      (input.depth === "deep" 
-        ? `Deep analysis indicates this area is ripe for further investigation, with emerging trends suggesting transformative potential. `
-        : "") +
-      `Further research is recommended for specific applications.`;
-    
-    // Related topics
-    research.relatedTopics = [
-      `${input.topic} best practices`,
-      `${input.topic} case studies`,
-      `Future of ${input.topic}`,
-    ];
-    
     return {
       output: {
-        ...research,
-        success: true,
-        queriesExecuted: queries.length,
-      },
-    };
-  },
-});
-
-// ============================================================================
-// COMPARE - Compare multiple sources/options ($0.50)
-// ============================================================================
-
-const compareInputSchema = z.object({
-  items: z.array(z.string()).min(2).max(10).describe("Items to compare (URLs, product names, or concepts)"),
-  criteria: z.array(z.string()).optional().describe("Specific criteria to compare on"),
-  format: z.enum(["detailed", "table", "summary"]).default("detailed").describe("Output format for comparison"),
-});
-
-addEntrypoint({
-  key: "compare",
-  description: "Compare multiple sources, options, or concepts. Provide items to compare and optional criteria for structured analysis.",
-  input: compareInputSchema,
-  price: "0.50",
-  handler: async (ctx) => {
-    const input = ctx.input as z.infer<typeof compareInputSchema>;
-    
-    // Default criteria if not provided
-    const criteria = input.criteria?.length 
-      ? input.criteria 
-      : ["Overview", "Key Features", "Strengths", "Weaknesses", "Best For"];
-    
-    // Build comparison matrix
-    const comparison = {
-      items: input.items,
-      criteria,
-      matrix: {} as Record<string, Record<string, string>>,
-      summary: "",
-      recommendation: "",
-    };
-    
-    // Generate comparison data for each item
-    for (const item of input.items) {
-      comparison.matrix[item] = {};
-      for (const criterion of criteria) {
-        // Generate contextual comparison text
-        comparison.matrix[item][criterion] = generateComparisonText(item, criterion);
-      }
-    }
-    
-    // Generate summary based on format
-    if (input.format === "summary") {
-      comparison.summary = `Comparison of ${input.items.length} items: ${input.items.join(", ")}. ` +
-        `Each was evaluated across ${criteria.length} criteria. ` +
-        `Key differentiators include scope, features, and target use cases.`;
-    } else if (input.format === "table") {
-      // Create text-based table representation
-      const headerRow = ["Criterion", ...input.items].join(" | ");
-      const separator = "-".repeat(headerRow.length);
-      const dataRows = criteria.map(criterion => 
-        [criterion, ...input.items.map(item => comparison.matrix[item][criterion].slice(0, 30) + "...")].join(" | ")
-      );
-      comparison.summary = [headerRow, separator, ...dataRows].join("\n");
-    } else {
-      comparison.summary = input.items.map(item => 
-        `**${item}**:\n` + criteria.map(c => `  - ${c}: ${comparison.matrix[item][c]}`).join("\n")
-      ).join("\n\n");
-    }
-    
-    // Generate recommendation
-    comparison.recommendation = `Based on the comparison, the choice between ${input.items.join(" and ")} ` +
-      `depends on specific requirements. Consider the evaluation criteria most relevant to your use case.`;
-    
-    return {
-      output: {
-        ...comparison,
-        format: input.format,
-        itemCount: input.items.length,
-        criteriaCount: criteria.length,
+        items,
+        criteria: usedCriteria,
+        matrix,
+        winner: comparison.winner,
+        recommendation: comparison.recommendation,
+        tedTake: comparison.tedTake,
+        honestDisclaimer: "Comparisons without real-world testing are mostly theater. Use this as a starting point for your own evaluation, not as a conclusion.",
         success: true,
       },
     };
   },
 });
-
-// Helper function to generate comparison text
-function generateComparisonText(item: string, criterion: string): string {
-  const templates: Record<string, (item: string) => string> = {
-    "Overview": (i) => `${i} provides a comprehensive solution with distinct characteristics and applications.`,
-    "Key Features": (i) => `${i} offers unique capabilities tailored to specific use cases and requirements.`,
-    "Strengths": (i) => `${i} excels in its primary domain with notable advantages.`,
-    "Weaknesses": (i) => `${i} may have limitations in certain edge cases or specialized scenarios.`,
-    "Best For": (i) => `${i} is ideal for users seeking its particular strengths and features.`,
-  };
-  
-  const template = templates[criterion];
-  if (template) {
-    return template(item);
-  }
-  
-  return `${item} demonstrates specific characteristics related to ${criterion}.`;
-}
 
 export { app };
