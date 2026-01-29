@@ -92,3 +92,5 @@ PAYMENTS_RECEIVABLE_ADDRESS=<your-wallet>
 
 MIT
 # Trigger redeploy Thu Jan 29 13:36:15 EST 2026
+
+<!-- Trigger redeploy Thu Jan 29 14:08:55 EST 2026 -->
