@@ -114,7 +114,7 @@ addEntrypoint({
   key: "summarize",
   description: "Summarize a URL or text. Extracts key points without the fluff.",
   input: summarizeSchema,
-  price: { amount: "0.15", currency: "USDC" },
+  price: "0.15",
   handler: async (ctx) => {
     const { url, text, maxLength, keywords } = ctx.input as z.infer<typeof summarizeSchema>;
     let content = text || "";
@@ -141,7 +141,7 @@ addEntrypoint({
   key: "research",
   description: "Research analysis with skeptical framework.",
   input: researchSchema,
-  price: { amount: "0.25", currency: "USDC" },
+  price: "0.25",
   handler: async (ctx) => {
     const { topic, questions, skepticalMode } = ctx.input as z.infer<typeof researchSchema>;
     const researchFramework = {
@@ -161,7 +161,7 @@ addEntrypoint({
   key: "compare",
   description: "Compare options with honest trade-off analysis.",
   input: compareSchema,
-  price: { amount: "0.10", currency: "USDC" },
+  price: "0.10",
   handler: async (ctx) => {
     const { items, criteria } = ctx.input as z.infer<typeof compareSchema>;
     const usedCriteria = criteria?.length ? criteria : ["Core Value Proposition", "Key Trade-offs", "Best Use Case"];
