@@ -1,35 +1,93 @@
-## research-agent
+# Research Agent
 
-This project was scaffolded with `create-agent-kit` and ships with a ready-to-run agent app built on [`@lucid-agents/core`](https://www.npmjs.com/package/@lucid-agents/core).
+Deep research synthesis agent with x402 payments. Summarize, research, and compare topics.
 
-### Quick start
+## Entrypoints
 
-```sh
+| Endpoint | Description | Price |
+|----------|-------------|-------|
+| `summarize` | Summarize URL or text | $0.25 USDC |
+| `research` | Deep research on topic | $1.00 USDC |
+| `compare` | Compare multiple sources | $0.50 USDC |
+
+## Features
+
+**Summarization:**
+- URL content extraction
+- Text summarization
+- Key points extraction
+
+**Deep Research:**
+- Multi-source aggregation
+- Topic synthesis
+- Structured reports
+
+**Comparison:**
+- Side-by-side analysis
+- Pros/cons extraction
+- Recommendation generation
+
+## Usage
+
+### Local Development
+
+```bash
 bun install
 bun run dev
 ```
 
-The dev command runs `bun` in watch mode, starts the HTTP server, and reloads when you change files inside `src/`.
+### API Endpoints
 
-### Project structure
+```bash
+# Summarize content
+curl -X POST http://localhost:3000/entrypoints/summarize/invoke \
+  -H "Content-Type: application/json" \
+  -d '{
+    "input": {
+      "text": "Long article text here...",
+      "maxLength": 200
+    }
+  }'
 
-- `src/agent.ts` – defines your agent manifest and entrypoints.
-- `src/index.ts` – boots a Bun HTTP server with the agent.
+# Research a topic
+curl -X POST http://localhost:3000/entrypoints/research/invoke \
+  -H "Content-Type: application/json" \
+  -d '{
+    "input": {
+      "topic": "ERC-8004 Trustless Agents",
+      "depth": "comprehensive"
+    }
+  }'
 
-### Default entrypoints
+# Compare options
+curl -X POST http://localhost:3000/entrypoints/compare/invoke \
+  -H "Content-Type: application/json" \
+  -d '{
+    "input": {
+      "items": ["Aave", "Compound", "MakerDAO"],
+      "criteria": ["APY", "security", "ease of use"]
+    }
+  }'
+```
 
-- `echo` – Echo input text
+## Configuration
 
-### Available scripts
+Environment variables (`.env`):
 
-- `bun run dev` – start the agent in watch mode.
-- `bun run start` – start the agent once.
-- `bun run agent` – run the agent module directly (helpful for quick experiments).
-- `bunx tsc --noEmit` – type-check the project.
+```
+AGENT_NAME=research-agent
+NETWORK=base
+FACILITATOR_URL=https://facilitator.daydreams.systems
+PAYMENTS_RECEIVABLE_ADDRESS=<your-wallet>
+```
 
-### Next steps
+## Tech Stack
 
-- Update `src/agent.ts` with your use case.
-- Wire up `@lucid-agents/core` configuration and secrets (see `AGENTS.md` in the repo for details).
-- Update `.env` with your actual PRIVATE_KEY and configuration values.
-- Deploy with your preferred Bun-compatible platform when you're ready.
+- Runtime: Bun
+- Framework: Lucid Agents SDK
+- Payments: x402 on Base
+- Language: TypeScript
+
+## License
+
+MIT
