@@ -8,6 +8,72 @@ import { readFileSync } from "fs";
 import { join } from "path";
 console.log('[agent] Imports done, creating agent...');
 
+// ============================================================================
+// AI-POWERED RESEARCH (OpenRouter)
+// ============================================================================
+
+async function callAI(systemPrompt: string, userPrompt: string, model: string = "anthropic/claude-sonnet-4-20250514"): Promise<string> {
+  const apiKey = process.env.OPENROUTER_API_KEY;
+  if (!apiKey) {
+    console.warn("OPENROUTER_API_KEY not configured");
+    return "";
+  }
+  
+  try {
+    const response = await fetch("https://openrouter.ai/api/v1/chat/completions", {
+      method: "POST",
+      headers: {
+        "Authorization": `Bearer ${apiKey}`,
+        "Content-Type": "application/json",
+        "HTTP-Referer": "https://unabotter.xyz",
+        "X-Title": "Ted Research Agent"
+      },
+      body: JSON.stringify({
+        model,
+        messages: [
+          { role: "system", content: systemPrompt },
+          { role: "user", content: userPrompt }
+        ],
+        max_tokens: 4096,
+        temperature: 0.5
+      })
+    });
+    
+    if (!response.ok) {
+      console.error("OpenRouter API error:", await response.text());
+      return "";
+    }
+    
+    const data = await response.json() as any;
+    return data.choices[0].message.content;
+  } catch (error) {
+    console.error("AI call failed:", error);
+    return "";
+  }
+}
+
+const RESEARCH_ANALYST_PROMPT = `You are Ted - a skeptical, analytical researcher who cuts through hype to find signal. Your research style:
+
+APPROACH:
+- Question assumptions and popular narratives
+- Look for incentives and biases in sources
+- Distinguish facts from opinions from speculation
+- Identify what's NOT being said
+- Connect dots others miss
+
+OUTPUT:
+- Clear, concise summaries
+- Bullet points for key findings
+- Explicit confidence levels
+- Counter-arguments included
+- Actionable insights when possible
+
+VOICE:
+- Direct, no fluff
+- Sardonic when appropriate
+- Intellectually honest
+- Skeptical but not cynical`;
+
 const agent = await createAgent({
   name: process.env.AGENT_NAME ?? "research-agent",
   version: process.env.AGENT_VERSION ?? "1.0.0",
@@ -116,13 +182,15 @@ const compareSchema = z.object({
 
 addEntrypoint({
   key: "summarize",
-  description: "Summarize a URL or text. Extracts key points without the fluff.",
+  description: "AI-powered summarization. Extracts key insights with Ted's analytical edge.",
   input: summarizeSchema,
   price: "0.15",
   handler: async (ctx) => {
     const { url, text, maxLength, keywords } = ctx.input as z.infer<typeof summarizeSchema>;
     let content = text || "";
     let fetchedUrl = url;
+    
+    // Fetch URL content if provided
     if (url) {
       try {
         const response = await fetch(url, {
@@ -136,28 +204,147 @@ addEntrypoint({
         return { output: { error: `Fetch failed: ${error instanceof Error ? error.message : "Unknown error"}`, url, success: false } };
       }
     }
-    const result = summarizeText(content, maxLength, keywords || []);
-    return { output: { summary: result.summary, keyPoints: result.keyPoints, sourceUrl: fetchedUrl, originalWordCount: result.wordCount, summaryLength: result.summary.length, success: true, tedNote: "Summarization is lossy compression. The nuance is always in what got cut." } };
+    
+    // Try AI-powered summarization
+    let aiSummary = "";
+    let aiKeyPoints: string[] = [];
+    try {
+      const prompt = `Summarize the following content in ${maxLength} characters or less.
+${keywords?.length ? `Focus on these aspects: ${keywords.join(', ')}` : ''}
+
+Content to summarize:
+"""
+${content.slice(0, 15000)}
+"""
+
+Return as JSON:
+{
+  "summary": "concise summary here",
+  "keyPoints": ["point 1", "point 2", "point 3"],
+  "mainClaim": "the central argument or thesis",
+  "biasesNoted": ["any obvious biases or missing perspectives"],
+  "confidence": "high|medium|low"
+}`;
+
+      const aiResponse = await callAI(RESEARCH_ANALYST_PROMPT, prompt);
+      
+      if (aiResponse) {
+        const jsonMatch = aiResponse.match(/\{[\s\S]*\}/);
+        if (jsonMatch) {
+          const parsed = JSON.parse(jsonMatch[0]);
+          aiSummary = parsed.summary || "";
+          aiKeyPoints = parsed.keyPoints || [];
+        }
+      }
+    } catch (error) {
+      console.error("AI summarization failed:", error);
+    }
+    
+    // Fallback to algorithmic if AI fails
+    const algoResult = summarizeText(content, maxLength, keywords || []);
+    
+    const isAiPowered = aiSummary.length > 50;
+    
+    return { 
+      output: { 
+        summary: isAiPowered ? aiSummary : algoResult.summary, 
+        keyPoints: isAiPowered ? aiKeyPoints : algoResult.keyPoints, 
+        sourceUrl: fetchedUrl, 
+        originalWordCount: algoResult.wordCount, 
+        summaryLength: (isAiPowered ? aiSummary : algoResult.summary).length, 
+        aiPowered: isAiPowered,
+        success: true, 
+        tedNote: isAiPowered 
+          ? "AI-analyzed summary. I looked for what matters, not just what's repeated."
+          : "Algorithmic fallback. AI unavailable." 
+      } 
+    };
   },
 });
 
 addEntrypoint({
   key: "research",
-  description: "Research analysis with skeptical framework.",
+  description: "AI-powered research analysis with skeptical framework. Deep dive into any topic.",
   input: researchSchema,
   price: "0.25",
   handler: async (ctx) => {
     const { topic, questions, skepticalMode } = ctx.input as z.infer<typeof researchSchema>;
-    const researchFramework = {
+    
+    // AI-powered research synthesis
+    let aiAnalysis: any = null;
+    try {
+      const prompt = `Research and analyze: ${topic}
+
+${questions?.length ? `Specific questions to address:\n${questions.map((q, i) => `${i + 1}. ${q}`).join('\n')}` : ''}
+
+${skepticalMode ? 'Apply skeptical analysis: Question assumptions, identify biases, consider who benefits from common narratives.' : ''}
+
+Provide comprehensive analysis as JSON:
+{
+  "overview": "What this actually is (2-3 sentences)",
+  "keyInsights": ["insight 1", "insight 2", "insight 3"],
+  "commonMisconceptions": ["misconception and reality"],
+  "tradeoffs": {
+    "pros": ["benefit 1", "benefit 2"],
+    "cons": ["drawback 1", "drawback 2"]
+  },
+  "stakeholderAnalysis": {
+    "whobenefits": "who gains from this",
+    "whoPays": "who bears the costs"
+  },
+  "relatedTopics": ["topic 1", "topic 2"],
+  "openQuestions": ["unresolved question 1", "question 2"],
+  "tedTake": "sardonic but insightful perspective",
+  "confidenceLevel": "high|medium|low",
+  "suggestedNextSteps": ["action 1", "action 2"]
+}`;
+
+      const aiResponse = await callAI(RESEARCH_ANALYST_PROMPT, prompt);
+      
+      if (aiResponse) {
+        const jsonMatch = aiResponse.match(/\{[\s\S]*\}/);
+        if (jsonMatch) {
+          aiAnalysis = JSON.parse(jsonMatch[0]);
+        }
+      }
+    } catch (error) {
+      console.error("AI research failed:", error);
+    }
+    
+    // Build response
+    const baseFramework = {
       topic,
       timestamp: new Date().toISOString(),
       suggestedSearches: [`${topic} overview`, `${topic} criticism`, `${topic} vs alternatives`, `${topic} problems`],
       questionsToAnswer: questions || [`What problem does ${topic} actually solve?`, `Who benefits most from ${topic}?`, `What are the trade-offs?`],
-      skepticalAnalysis: skepticalMode ? { questionsToAsk: ["What incentives does the source have?", "What's NOT being said here?", "Who benefits from this framing?"], potentialBiases: ["Assumes shared baseline beliefs", "Takes current trends as permanent"] } : undefined,
-      tedTake: `${topic} is being discussed like it's new. It's not. The patterns here are older than the internet.`,
-      disclaimer: "This is a research framework, not research results.",
     };
-    return { output: { ...researchFramework, success: true } };
+    
+    if (aiAnalysis) {
+      return { 
+        output: { 
+          ...baseFramework,
+          aiPowered: true,
+          analysis: aiAnalysis,
+          success: true,
+          tedNote: "AI-synthesized research. I've connected dots, but verify claims that matter."
+        } 
+      };
+    }
+    
+    // Fallback
+    return { 
+      output: { 
+        ...baseFramework,
+        aiPowered: false,
+        skepticalAnalysis: skepticalMode ? { 
+          questionsToAsk: ["What incentives does the source have?", "What's NOT being said here?", "Who benefits from this framing?"], 
+          potentialBiases: ["Assumes shared baseline beliefs", "Takes current trends as permanent"] 
+        } : undefined,
+        tedTake: `${topic} is being discussed like it's new. It's not. The patterns here are older than the internet.`,
+        disclaimer: "Framework only - AI unavailable for deep analysis.",
+        success: true 
+      } 
+    };
   },
 });
 
