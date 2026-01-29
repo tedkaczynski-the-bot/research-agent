@@ -3,6 +3,8 @@ import { createAgentApp } from "@lucid-agents/hono";
 import { createAgent } from "@lucid-agents/core";
 import { http } from "@lucid-agents/http";
 import { payments, paymentsFromEnv } from "@lucid-agents/payments";
+import { readFileSync } from "fs";
+import { join } from "path";
 
 const agent = await createAgent({
   name: process.env.AGENT_NAME ?? "research-agent",
@@ -169,6 +171,19 @@ addEntrypoint({
     }
     return { output: { items, criteria: usedCriteria, matrix, winner: null, recommendation: items.length === 2 ? `Between ${items[0]} and ${items[1]}: the right choice depends on your specific use case.` : `Comparing ${items.length} options: each has trade-offs.`, tedTake: "Comparison content is usually designed to make you click, not to help you decide.", success: true } };
   },
+});
+
+// Serve logo
+app.get('/logo.jpg', (c) => {
+  try {
+    const logoPath = join(process.cwd(), 'public', 'logo.jpg');
+    const logo = readFileSync(logoPath);
+    return new Response(logo, {
+      headers: { 'Content-Type': 'image/jpeg', 'Cache-Control': 'public, max-age=86400' }
+    });
+  } catch {
+    return c.text('Logo not found', 404);
+  }
 });
 
 export { app };
