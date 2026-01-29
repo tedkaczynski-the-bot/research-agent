@@ -2,6 +2,7 @@ import { z } from "zod";
 import { createAgentApp } from "@lucid-agents/hono";
 import { createAgent } from "@lucid-agents/core";
 import { http } from "@lucid-agents/http";
+import { payments, paymentsFromEnv } from "@lucid-agents/payments";
 
 const agent = await createAgent({
   name: process.env.AGENT_NAME ?? "research-agent",
@@ -9,6 +10,7 @@ const agent = await createAgent({
   description: "Research synthesis with Ted's analytical edge. Skeptical of hype, focused on signal.",
 })
   .use(http())
+  .use(payments({ config: paymentsFromEnv() }))
   .build();
 
 const { app, addEntrypoint } = await createAgentApp(agent);
@@ -110,6 +112,7 @@ addEntrypoint({
   key: "summarize",
   description: "Summarize a URL or text. Extracts key points without the fluff.",
   input: summarizeSchema,
+  price: { amount: "0.15", currency: "USDC" },
   handler: async (ctx) => {
     const { url, text, maxLength, keywords } = ctx.input as z.infer<typeof summarizeSchema>;
     let content = text || "";
@@ -136,6 +139,7 @@ addEntrypoint({
   key: "research",
   description: "Research analysis with skeptical framework.",
   input: researchSchema,
+  price: { amount: "0.25", currency: "USDC" },
   handler: async (ctx) => {
     const { topic, questions, skepticalMode } = ctx.input as z.infer<typeof researchSchema>;
     const researchFramework = {
@@ -155,6 +159,7 @@ addEntrypoint({
   key: "compare",
   description: "Compare options with honest trade-off analysis.",
   input: compareSchema,
+  price: { amount: "0.10", currency: "USDC" },
   handler: async (ctx) => {
     const { items, criteria } = ctx.input as z.infer<typeof compareSchema>;
     const usedCriteria = criteria?.length ? criteria : ["Core Value Proposition", "Key Trade-offs", "Best Use Case"];
